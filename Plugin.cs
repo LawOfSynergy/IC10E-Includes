@@ -13,6 +13,7 @@ using System.Linq;
 namespace Includes
 {
     [BepInPlugin("net.lawofsynergy.stationeers.trap", "[IC10E] Includes", "0.0.0.1")]
+    [BepInDependency("net.lawofsynergy.stationeers.ic10e")]
     public class Plugin : BaseUnityPlugin
     {
         public static ManualLogSource Log;
