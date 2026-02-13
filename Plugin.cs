@@ -9,6 +9,7 @@ using IC10_Extender.Preprocessors;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Includes
 {
@@ -27,7 +28,7 @@ namespace Includes
 
     public class IncludePreprocessor : Preprocessor
     {
-        internal const string Include = "@include";
+        public static readonly Regex Pattern = new Regex(@"(?<remainder>^.*)\s+(?<command>@include\s+(?<filename>[^\s].*))$", RegexOptions.Compiled);
 
         public override string SimpleName => "include_preprocessor";
 
@@ -45,22 +46,6 @@ namespace Includes
             return new HighlighterInstaance();
         }
 
-        public static string GetFilename(string line, out string remainder)
-        {
-            if(!string.IsNullOrEmpty(line) && line.Contains(Include)) 
-            { 
-                var index = line.IndexOf(Include) + Include.Length;
-                var filename = line.Substring(index).Trim();
-                remainder = line.Substring(0, index);
-
-                filename = Regexes.CleanInvalidXmlChars(filename);
-                filename = filename.SanitizeFilename();
-                return filename;
-            }
-            remainder = line;
-            return null;
-        }
-
         public class Instance : PreprocessorOperation
         {
             public Instance(ChipWrapper chip) : base(chip) { }
@@ -74,21 +59,25 @@ namespace Includes
 
             public IEnumerable<Line> ExpandLine(Line line)
             {
-                var filename = GetFilename(line.Raw, out var remainder);
-                var index = remainder.IndexOf(Include);
-                if (index != -1)
+                var match = Pattern.Match(line.Raw);
+
+                if (!match.Success) return new List<Line> { line };
+
+                var file = match.Groups["filename"];
+                var remainder = match.Groups["remainder"];
+
+                if (file.Success)
                 {
-                    line.Raw = remainder.Substring(0, index);
-                    line.Display = line.Raw;
+                    line.Raw = remainder.Value;
+                    line.Display = remainder.Value;
                 }
 
-                if (filename == null) return new List<Line> { line };
-                filename = Path.Combine(filename, "instruction.xml");
+                var filename = Path.Combine(file.Value, "instruction.xml");
 
                 var path = Path.Combine(StationSaveUtils.GetSavePathScriptsSubDir().FullName, filename);
                 if (!File.Exists(path))
                 {
-                    throw new ProgrammableChipException(ProgrammableChipException.ICExceptionType.Unknown, line.LineNumber);
+                    throw new ExtendedPCException(line.LineNumber, $"File not found: {path}");
                 }
 
                 var result = InstructionData.GetFromFile(path).Instructions.Split('\n').Select(l => new Line(l, line.OriginatingLineNumber));
@@ -105,42 +94,13 @@ namespace Includes
 
         public class HighlighterInstaance : SyntaxHighlighter
         {
-            public override string HighlightLine(string line)
+            public override void HighlightLine(StyledLine line)
             {
-                int index = line.IndexOf("<color=darkgrey>#");
-
-                var before = string.Empty;
-                var comment = string.Empty;
-
-                if (index != -1)
+                var match = Pattern.Match(line.Remainder());
+                if (match.Success)
                 {
-                    before = line.Substring(0, index);
-                    comment = ProgrammableChip.StripColorTags(line.Substring(index));
+                    line.Consume(match.Groups["command"].Value, line.Theme.Macro);
                 }
-                else
-                {
-                    comment = line;
-                }
-
-                index = comment.IndexOf(Include);
-                if (index != -1)
-                {
-                    var include = comment.Substring(index);
-                    comment = comment.Substring(0, index);
-                    var filename = GetFilename(include, out var remainder);
-
-                    var path = Path.Combine(filename, "instruction.xml");
-                    path = Path.Combine(StationSaveUtils.GetSavePathScriptsSubDir().FullName, path);
-                    var color = "green";
-                    if (!File.Exists(path)) color = "red";
-
-                    var result = line.Replace(Include, $"<color=green>{Include}</color>");
-                    if (!string.IsNullOrEmpty(filename)) result = result.Replace(filename, $"<color={color}>{filename}</color>");
-
-                    return result;
-                }
-
-                return line;
             }
         }
     }
